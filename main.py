@@ -21,6 +21,9 @@ import resnet12
 import s2m2
 import mlp
 print("models.")
+reconstruction_param =  0.5
+entropy_param = args.entropy
+
 if args.ema > 0:
     from torch_ema import ExponentialMovingAverage
 
@@ -33,15 +36,8 @@ if args.wandb:
 last_update, criterion = 0, torch.nn.CrossEntropyLoss()
 
 ### function to either use criterion based on output and target or criterion_episodic based on features and target
-def crit(output, features, target):
-    if args.episodic:
-        return criterion_episodic(features, target)
-    else:
-        if args.label_smoothing > 0:
-            criterion = LabelSmoothingLoss(num_classes = num_classes, smoothing = args.label_smoothing)
-        else:
-            criterion = torch.nn.CrossEntropyLoss()
-        return criterion(output, target)
+crit = nn.CrossEntropyLoss()
+
 
 ### main train function
 def train(model, train_loader, optimizer, epoch, scheduler, mixup = False, mm = False):
@@ -81,7 +77,7 @@ def train(model, train_loader, optimizer, epoch, scheduler, mixup = False, mm = 
             data[3*bs:] = data[3*bs:].transpose(3,2).flip(2)
             target_rot[3*bs:] = 3
 
-        if mixup or args.mm: # mixup or manifold_mixup
+        if mixup and args.mm: # mixup or manifold_mixup
             index_mixup = torch.randperm(data.shape[0])
             lam = random.random()            
             if args.mm:
@@ -95,12 +91,14 @@ def train(model, train_loader, optimizer, epoch, scheduler, mixup = False, mm = 
             else:
                 loss = lam * crit(output, features, target) + (1 - lam) * crit(output, features, target[index_mixup])
         else:
-            output, features = model(data)
+            output, features,features_quant,entropy = model(data,train=True)
             if args.rotations:
                 output, output_rot = output
                 loss = 0.5 * crit(output, features, target) + 0.5 * crit(output_rot, features, target_rot)                
             else:
-                loss = crit(output, features, target)
+                loss = criterion(output, target) 
+                loss += model.MSE_Loss(features,features_quant)*reconstruction_param 
+                loss += -entropy*entropy_param
 
         # backprop loss
         loss.backward()
@@ -196,16 +194,7 @@ def train_complete(model, loaders, mixup = False):
             if lr < 0:
                 optimizer = torch.optim.Adam(model.parameters(), lr = -1 * lr)
             else:
-                all_params = set(model.parameters())
-                wd_params = set()
-                for m in model.modules():
-                    try:
-                        _ = m.weight.shape
-                        wd_params.add(m.weight)
-                    except:
-                        pass
-                no_wd = all_params - wd_params
-                optimizer = torch.optim.SGD([{'params':list(wd_params)}, {'params':list(no_wd), 'weight_decay':0}], lr = lr, momentum = 0.9, weight_decay = 5e-4, nesterov = True)
+                optimizer = torch.optim.SGD(model.parameters(), lr = lr, momentum = 0.9, weight_decay = 5e-4, nesterov = True)
             if args.cosine:
                 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max = args.milestones[0] * length)
                 lr = lr * args.gamma
@@ -231,7 +220,7 @@ def train_complete(model, loaders, mixup = False):
                 for i in range(len(args.n_shots)):
                     print("val-{:d}: {:.2f}%, nov-{:d}: {:.2f}% ({:.2f}%) ".format(args.n_shots[i], 100 * res[i][0], args.n_shots[i], 100 * res[i][2], 100 * few_shot_meta_data["best_novel_acc"][i]), end = '')
                     if args.wandb:
-                        wandb.log({'epoch':epoch, f'val-{args.n_shots[i]}':res[i][0], f'nov-{args.n_shots[i]}':res[i][2], f'best-nov-{args.n_shots[i]}':few_shot_meta_data["best_novel_acc"][i]})
+                        wandb.log({'epoch':epoch, f'val-{args.n_shots[i]}':res[i][0], f'nov-{args.n_shots[i]}':res[i][2]})
 
                 print()
             else:
@@ -258,63 +247,15 @@ def train_complete(model, loaders, mixup = False):
         return test_stats
 
 ### process main arguments
-if (args.dataset == '' and '' in [args.base , args.val, args.novel]) or (args.dataset != '' and ('' != args.base or '' != args.val or '' != args.novel)) :
-    raise("Do you want to do cross-domain ? if NO use --dataset ;  if YES --base --val --novel ; you cannot use both ; define which dataset you want after each argument")
-
-if args.dataset != "" :
-    loaders, input_shape, num_classes, few_shot, top_5 = datasets.get_dataset(args.dataset)
-
-if args.base != "" and args.val != "" and args.novel != "":
-    loadersb, input_shapeb, num_classesb, few_shotb, top_5b = datasets.get_dataset(args.base)
-    if args.base == args.val:
-        loadersv, input_shapev, num_classesv, few_shotv, top_5v  = loadersb, input_shapeb, num_classesb, few_shotb, top_5b
-    else:
-        loadersv, input_shapev, num_classesv, few_shotv, top_5v = datasets.get_dataset(args.val)
-    if args.base == args.novel:
-        loadersn, input_shapen, num_classesn, few_shotn, top_5n = loadersb, input_shapeb, num_classesb, few_shotb, top_5b
-    elif args.base != args.novel and args.val == args.novel :
-        loadersn, input_shapen, num_classesn, few_shotn, top_5n = loadersv, input_shapev, num_classesv, few_shotv, top_5v
-    else:
-        loadersn, input_shapen, num_classesn, few_shotn, top_5n = datasets.get_dataset(args.novel)
-    loaders = (loadersb[0],loadersb[1], loadersv[2],loadersn[3])
-    loadersb,loadersv,loadersn=0,0,0
-
-    if  few_shotb != few_shotv or few_shotb != few_shotn or top_5b!=top_5v or top_5b!=top_5n :
-        print(few_shotb != few_shotv , few_shotb != few_shotn , top_5b!=top_5v,top_5b!=top_5n )
-        print('few_shotb != few_shotv or few_shotb != few_shotn or top_5b!=top_5v or top_5b!=top_5n')
-        raise InputError('the cross domain needs the same input dimension of images')
-    else:
-        input_shape = input_shapeb
-        few_shot =few_shotb
-        top_5 = top_5b
-
-
+loaders, input_shape, num_classes, few_shot, top_5 = datasets.get_dataset(args.dataset)
 ### initialize few-shot meta data
 if few_shot:
-    if args.dataset != "":
-        num_classes, val_classes, novel_classes, elements_per_class = num_classes
+    num_classes, val_classes, novel_classes, elements_per_class = num_classes
     if args.dataset.lower() in ["tieredimagenet", "cubfs"]:
         elements_train, elements_val, elements_novel = elements_per_class
-    elif args.dataset != "":
+    else:
         elements_val, elements_novel = [elements_per_class] * val_classes, [elements_per_class] * novel_classes
         elements_train = None
-    elif args.base != "":
-        num_classes , val_classes , novel_classes = num_classesb[0] , num_classesv[1] ,num_classesn[2]
-        if args.base.lower() in ["tieredimagenet", "cubfs"]:
-            elements_train= num_classesb[3][0]
-        else:
-            elements_train = num_classesb[3]
-        if args.val.lower() in ["tieredimagenet", "cubfs"]:
-            elements_val = num_classesv[3][1]
-        else:
-            elements_val  =  [num_classesv[3]] *val_classes
-        if args.novel.lower() in ["tieredimagenet", "cubfs"]:
-            elements_novel = num_classesn[3][2]
-        else:
-            elements_novel = [num_classesn[3]]*novel_classes
-
-    
-
     print("Dataset contains",num_classes,"base classes,",val_classes,"val classes and",novel_classes,"novel classes.")
     print("Generating runs... ", end='')
 
@@ -372,25 +313,15 @@ if args.test_features != "":
         filenames = args.test_features
     if isinstance(filenames, str):
         filenames = [filenames]
-    if args.dataset != '':
-        test_features = torch.cat([torch.load(fn, map_location=torch.device(args.device)).to(args.dataset_device) for fn in filenames], dim = 2)
-        print("Testing features of shape", test_features.shape)
-        train_features = test_features[:num_classes]
-        val_features = test_features[num_classes:num_classes + val_classes]
-        test_features = test_features[num_classes + val_classes:]
-    else:
-        test_features = torch.load(filenames[0], map_location=torch.device(args.device))
-        
-        train_features = test_features['base'].to(args.dataset_device)
-        val_features = test_features['val'].to(args.dataset_device)
-        test_features = test_features['novel'].to(args.dataset_device)
-        print("Testing features of shape", 'base', train_features.shape, 'val', val_features.shape, 'novel', test_features.shape)
-        print("if it fails please make sure --base --val --novel do correspond to the shapes above or (memory error) lower --batch-fs")
+    test_features = torch.cat([torch.load(fn, map_location=torch.device(args.device)).to(args.dataset_device) for fn in filenames], dim = 2)
+    print("Testing features of shape", test_features.shape)
+    train_features = test_features[:num_classes]
+    val_features = test_features[num_classes:num_classes + val_classes]
+    test_features = test_features[num_classes + val_classes:]
     if not args.transductive:
         for i in range(len(args.n_shots)):
             val_acc, val_conf, test_acc, test_conf = few_shot_eval.evaluate_shot(i, train_features, val_features, test_features, few_shot_meta_data)
-            print("TEST Inductive {:d}-shot: {:.2f}% (± {:.2f}%)".format(args.n_shots[i], 100 * test_acc, 100 * test_conf))
-            print("VAL Inductive {:d}-shot: {:.2f}% (± {:.2f}%)".format(args.n_shots[i], 100 * val_acc, 100 * val_conf))
+            print("Inductive {:d}-shot: {:.2f}% (± {:.2f}%)".format(args.n_shots[i], 100 * test_acc, 100 * test_conf))
     else:
         for i in range(len(args.n_shots)):
             val_acc, val_conf, test_acc, test_conf = few_shot_eval.evaluate_shot(i, train_features, val_features, test_features, few_shot_meta_data, transductive = True)
@@ -402,16 +333,14 @@ for i in range(args.runs):
     if not args.quiet:
         print(args)
     if args.wandb:
-        tag = (args.dataset != '')*[args.dataset] + (args.dataset == '')*['cross-domain']
         wandb.init(project="few-shot", 
-            entity=args.wandb, 
-            tags=tag, 
+            entity="bendouy", 
+            tags=[f'run_{i}', args.dataset], 
             notes=str(vars(args))
             )
         wandb.log({"run": i})
-        wandb.log({'base': args.base, 'val': args.val , 'novel': args.novel, 'run' : i })
-        wandb.log({'rmclass': args.rmclass })
     model = create_model()
+
     if args.ema > 0:
         ema = ExponentialMovingAverage(model.parameters(), decay=args.ema)
 

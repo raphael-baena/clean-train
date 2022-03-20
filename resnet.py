@@ -43,7 +43,10 @@ class ResNet(nn.Module):
         self.linear_rot = linear((2 ** (len(num_blocks) - 1)) * feature_maps, 4)
         self.rotations = rotations
         self.depth = len(num_blocks)
-
+        self.embd = nn.Embedding(100,(2 ** (len(num_blocks) - 1)) * feature_maps)
+        self.embd.weight.data.uniform_(-1/100, 1/100)
+        self.proj = linear((2 ** (len(num_blocks) - 1)) * feature_maps,100)
+        self.MSE_Loss = torch.nn.MSELoss()
     def _make_layer(self, block, planes, num_blocks, stride):
         strides = [stride] + [1]*(num_blocks-1)
         layers = []
@@ -55,7 +58,7 @@ class ResNet(nn.Module):
             self.in_planes = planes
         return nn.Sequential(*layers)
 
-    def forward(self, x, index_mixup = None, lam = -1):
+    def forward(self, x, index_mixup = None, lam = -1,train=False):
         if lam != -1:
             mixup_layer = random.randint(0, len(self.layers))
         else:
@@ -75,7 +78,20 @@ class ResNet(nn.Module):
         if self.rotations:
             out_rot = self.linear_rot(features)
             return (out, out_rot), features
-        return out, features
+        if train:
+          logits = self.proj(features)
+          soft_one_hot = F.gumbel_softmax(logits)
+          features_quant = torch.einsum('b n, n d -> b d', soft_one_hot, self.embd.weight)
+        #logits += torch.rand(logits.size())
+          logits = soft_one_hot.sum(0)
+          logits =  F.softmax(logits,dim=-1)
+        
+        #uniform_sample = torch.ones(10)*1/10#self.uniform.rsample(sample_shape = [ 10] )
+        #entropy = self.KL_Loss(logits,uniform_sample)
+          entropy = - (logits*logits.log()).sum()
+          return out, features,features_quant,entropy
+        else:
+          return out, features
 
 def ResNet18(feature_maps, input_shape, num_classes, few_shot, rotations):
     return ResNet(BasicBlock, [2, 2, 2, 2], feature_maps, input_shape, num_classes, few_shot, rotations)
