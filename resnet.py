@@ -87,7 +87,7 @@ class ResNet(nn.Module):
 	#logits += torch.rand(logits.size())
           logits = soft_one_hot.sum(0)
           logits =  F.softmax(logits,dim=-1)
-        
+          entropy = -(logits *torch.log(logits+1e-21)).sum()
         #uniform_sample = torch.ones(10)*1/10#self.uniform.rsample(sample_shape = [ 10] )
         #entropy = self.KL_Loss(logits,uniform_sample)
 
@@ -100,3 +100,4 @@ def ResNet18(feature_maps, input_shape, num_classes, few_shot, rotations):
 
 def ResNet20(feature_maps, input_shape, num_classes, few_shot, rotations):
     return ResNet(BasicBlock, [3, 3, 3], feature_maps, input_shape, num_classes, few_shot, rotations)
+
