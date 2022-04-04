@@ -82,14 +82,16 @@ class ResNet(nn.Module):
           logits = self.proj(features)
           soft_one_hot = F.gumbel_softmax(logits)
           features_quant = torch.einsum('b n, n d -> b d', soft_one_hot, self.embd.weight)
-        #logits += torch.rand(logits.size())
+          loss_quant = self.MSE_Loss(features_quant.detach(),features)*args.reconstruction_param +self.MSE_Loss(features_quant,features.detach())
+
+	#logits += torch.rand(logits.size())
           logits = soft_one_hot.sum(0)
           logits =  F.softmax(logits,dim=-1)
         
         #uniform_sample = torch.ones(10)*1/10#self.uniform.rsample(sample_shape = [ 10] )
         #entropy = self.KL_Loss(logits,uniform_sample)
-          entropy = - (logits*logits.log()).sum()
-          return out, features,features_quant,entropy
+
+          return out, features,loss_quant,entropy
         else:
           return out, features
 

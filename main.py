@@ -91,14 +91,14 @@ def train(model, train_loader, optimizer, epoch, scheduler, mixup = False, mm = 
             else:
                 loss = lam * crit(output, features, target) + (1 - lam) * crit(output, features, target[index_mixup])
         else:
-            output, features,features_quant,entropy = model(data,train=True)
+            output, features,loss_quant,entropy = model(data,train=True)
             if args.rotations:
                 output, output_rot = output
                 loss = 0.5 * crit(output, features, target) + 0.5 * crit(output_rot, features, target_rot)                
             else:
-                loss = criterion(output, target) 
-                loss += model.MSE_Loss(features,features_quant)*reconstruction_param 
-                loss += -entropy*entropy_param
+                loss = criterion(output, target) - entropy*entropy_param + loss_quant
+                #loss += model.MSE_Loss(features,features_quant)*reconstruction_param 
+                #loss += -entropy*entropy_param
 
         # backprop loss
         loss.backward()

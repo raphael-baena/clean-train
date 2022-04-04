@@ -35,7 +35,8 @@ python main.py --device cuda:012 --dataset miniimagenet --model S2M2R --lr -0.00
 """, formatter_class=argparse.RawTextHelpFormatter)
 
 ### hyperparameters
-parser.add_argument("--entropy", type=int, default=10, help="entropy")
+parser.add_argument("--entropy", type=float, default=1, help="entropy")
+parser.add_argument("--reconstruction-param", type=float, default=0.1, help="reconstruction param")
 parser.add_argument("--batch-size", type=int, default=64, help="batch size")
 parser.add_argument("--batch-fs", type=int, default=100, help="batch size for few shot runs")
 parser.add_argument("--feature-maps", type=int, default=64, help="number of feature maps")
