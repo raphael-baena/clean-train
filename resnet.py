@@ -44,8 +44,8 @@ class ResNet(nn.Module):
         self.rotations = rotations
         self.depth = len(num_blocks)
         cat = 1
-        self.proj = torch.randn(cat,(2 ** (len(num_blocks) - 1)) * feature_maps, 100)
-
+        self.proj = torch.randn(cat,(2 ** (len(num_blocks) - 1)) * feature_maps, 100).cuda()
+        torch.nn.init.uniform_(self.proj)
     def _make_layer(self, block, planes, num_blocks, stride):
         strides = [stride] + [1]*(num_blocks-1)
         layers = []
@@ -80,7 +80,7 @@ class ResNet(nn.Module):
         if train:
           distances  =  torch.einsum('bd,cde -> bce', features,self.proj.detach())
           soft_one_hot = F.gumbel_softmax(distances, hard =True)
-          logits = soft_one_hot.sum(0) / X.size()[0] # ce
+          logits = soft_one_hot.sum(0) / x.size()[0] # ce
           entropy =  - torch.sum(logits*torch.log2(logits+1e-21),1).mean()
           return out, features,entropy
         else:
