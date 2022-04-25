@@ -97,7 +97,8 @@ def train(model, train_loader, optimizer, epoch, scheduler, mixup = False, mm = 
                 loss = 0.5 * crit(output, features, target) + 0.5 * crit(output_rot, features, target_rot)                
             else:
                 loss = criterion(output, target) - entropy*entropy_param 
-
+                #loss += model.MSE_Loss(features,features_quant)*reconstruction_param 
+                #loss += -entropy*entropy_param
 
         # backprop loss
         loss.backward()

@@ -45,7 +45,7 @@ class ResNet(nn.Module):
         self.depth = len(num_blocks)
         cat = 1
         self.proj = torch.randn(cat,(2 ** (len(num_blocks) - 1)) * feature_maps, 100).cuda()
-        torch.nn.init.uniform_(self.proj)
+        torch.nn.init.uniform_(self.proj,-1/100,1/100)
     def _make_layer(self, block, planes, num_blocks, stride):
         strides = [stride] + [1]*(num_blocks-1)
         layers = []
