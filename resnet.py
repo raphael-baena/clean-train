@@ -78,6 +78,10 @@ class ResNet(nn.Module):
             out_rot = self.linear_rot(features)
             return (out, out_rot), features
         if train:
+          features_norm = torch.norm(features,dim = -1)
+          proj_norm = torch.norm(self.proj.detach(),dim  = 1)
+          prod_norm = torch.einsum('b, ce->bce',features_norm,proj_norm)
+          distances  =  torch.einsum('bd,cde -> bce', features,self.proj.detach())/prod_norm
           distances  =  torch.einsum('bd,cde -> bce', features,self.proj.detach())
           soft_one_hot = F.gumbel_softmax(distances, hard =True)
           logits = soft_one_hot.sum(0) / x.size()[0] # ce
