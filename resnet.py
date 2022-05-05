@@ -81,8 +81,7 @@ class ResNet(nn.Module):
           features_norm = torch.norm(features,dim = -1)
           proj_norm = torch.norm(self.proj.detach(),dim  = 1)
           prod_norm = torch.einsum('b, ce->bce',features_norm,proj_norm)
-          distances  =  torch.einsum('bd,cde -> bce', features,self.proj.detach())/prod_norm
-          distances  =  torch.einsum('bd,cde -> bce', features,self.proj.detach())
+          distances  =  torch.einsum('bd,cde -> bce', features,self.proj.detach())/prod_normy
           soft_one_hot = F.gumbel_softmax(distances, hard =True)
           logits = soft_one_hot.sum(0) / x.size()[0] # ce
           entropy =  - torch.sum(logits*torch.log2(logits+1e-21),1).mean()
