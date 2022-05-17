@@ -76,18 +76,24 @@ class ResNet(nn.Module):
         out = self.linear(features)
         if self.rotations:
             out_rot = self.linear_rot(features)
-            return (out, out_rot), features
+            #return (out, out_rot), features
         if train:
           features_norm = torch.norm(features,dim = -1)
           proj_norm = torch.norm(self.proj.detach(),dim  = 1)
           prod_norm = torch.einsum('b, ce->bce',features_norm,proj_norm)
-          distances  =  torch.einsum('bd,cde -> bce', features,self.proj.detach())/prod_normy
+          distances  =  torch.einsum('bd,cde -> bce', features,self.proj.detach())/prod_norm
           soft_one_hot = F.gumbel_softmax(distances, hard =True)
           logits = soft_one_hot.sum(0) / x.size()[0] # ce
           entropy =  - torch.sum(logits*torch.log2(logits+1e-21),1).mean()
-          return out, features,entropy
+          if self.rotations:
+              return (out,out_rot),features,entropy
+          else:
+              return out, features,entropy
         else:
-          return out, features
+            if self.rotations:
+                return out,features, entropy
+            else:
+                return out, features
 
 def ResNet18(feature_maps, input_shape, num_classes, few_shot, rotations):
     return ResNet(BasicBlock, [2, 2, 2, 2], feature_maps, input_shape, num_classes, few_shot, rotations)

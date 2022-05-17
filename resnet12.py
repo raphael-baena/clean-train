@@ -47,8 +47,10 @@ class ResNet12(nn.Module):
             elif isinstance(m, nn.BatchNorm2d):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
-
-    def forward(self, x, index_mixup = None, lam = -1):
+        cat = 1
+        self.proj = torch.randn(cat,10*feature_maps, 100).cuda()
+        torch.nn.init.uniform_(self.proj,-1.,1.)
+    def forward(self, x, index_mixup = None, lam = -1,train = False):
         if lam != -1:
             mixup_layer = random.randint(0, 3)
         else:
@@ -64,7 +66,22 @@ class ResNet12(nn.Module):
         out = F.avg_pool2d(out, out.shape[2])
         features = out.view(out.size(0), -1)
         out = self.linear(features)
-        if self.rotations:
+        if train:
+          features_norm = torch.norm(features,dim = -1)
+          proj_norm = torch.norm(self.proj.detach(),dim  = 1)
+          prod_norm = torch.einsum('b, ce->bce',features_norm,proj_norm)
+          distances  =  torch.einsum('bd,cde -> bce', features,self.proj.detach())/prod_norm
+          soft_one_hot = F.gumbel_softmax(distances, hard =True)
+          logits = soft_one_hot.sum(0) / x.size()[0] # ce
+          entropy =  - torch.sum(logits*torch.log2(logits+1e-21),1).mean()
+          if self.rotations:
             out_rot = self.linear_rot(features)
-            return (out, out_rot), features
-        return out, features
+            return (out, out_rot), features,entropy
+          else:
+            return out, features, entropy
+        else:
+            if self.rotations:
+                out_rot = self.linear_rot(features)
+                return (out, out_rot), features
+            else:
+                return out, features
