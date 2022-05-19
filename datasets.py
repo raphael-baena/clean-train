@@ -402,28 +402,27 @@ def tieredImageNet(use_hd=True):
     return (train_loader, train_clean, val_loader, test_loader), [3, 84, 84], (351, 97, 160, (num_elements['train'], num_elements['val'], num_elements['test'])), True, False
 
 import pickle
-
-def CUBfs(use_hd=False):
-    """
-    CUB FS dataset
-    Number of classes : 
-    - train: 100
-    - val  : 50
-    - novel: 50
-    Number of samples per class: at most 60
-    Images size : 84x84
-    """
-    classes      = []
+def CUBfs(use_hd=True):
     datasets     = {}
     num_elements = {}
-    path         = os.path.join(args.dataset_path, 'cub')
-    list_files = os.listdir(path)
-
+    folders_path         = os.path.join(args.dataset_path, 'CUB_200_2011')    
+    images_path         = os.path.join(folders_path, 'CUB_200_2011', 'images')    
+    list_files = os.listdir(images_path)
+    list_files.sort()
+    num_elements = {}
+    buffer = {'train':0, 'val':100, 'test':150}
+    class_names = {}
     for subset in ['train', 'val', 'test']:
-        data   = []
-        class_counter = {}
+        data = []
         target = []
-        csv_path = os.path.join(path, 'split', f'{subset}.csv')
+        num_elements[subset]=[]
+        
+        if subset=='train':
+            data_train = []
+            target_train = []
+        
+        csv_path = os.path.join(folders_path, 'split', f'{subset}.csv')
+        class_names[subset] = []
         with open(csv_path, "r") as f:
             start = 0
             for line in f:
@@ -432,45 +431,61 @@ def CUBfs(use_hd=False):
                 else:
                     splits = line.split(",")
                     fn, c = splits[0], splits[1]
-                    if fn in list_files:
-                        c = int(c.split('.')[0])
-                        if c not in classes:
-                            classes.append(c)
-                            class_counter[len(classes)-1]=1
-                        else:
-                            class_counter[len(classes)-1]+=1
-                        target.append(len(classes)-1)
-                        file_path = os.path.join(args.dataset_path, 'cub', fn)
-                        if not use_hd:
-                            image = transforms.ToTensor()(np.array(Image.open(file_path).convert('RGB')))
-                            data.append(image)
-                        else:
-                            data.append(file_path)
-        if subset == 'train':
-            datasets['train_base'] = [data.copy(), torch.LongTensor(target)]
-        
-        for c, count in class_counter.items():
-            if count < 60:
-                for _ in range(60-count):
-                    if not use_hd:
+                    fn2 = ''.join([i for i in fn if not i.isdigit()])
+                    fn2 = fn2.replace('.', '').replace('_', '').replace('jpg', '').lower()
+                    if fn2 not in class_names[subset]:
+                        class_names[subset].append(fn2)
+        files = [fn for fn in list_files if (''.join([i for i in fn if not i.isdigit()])).replace('.', '').replace('_', '').replace('jpg', '').lower() in class_names[subset]]
+        for c, folder in enumerate(files):
+            count = 0
+            images = os.listdir(os.path.join(images_path, folder))
+            for file in images:
+                count+=1
+                target.append(c+buffer[subset])
+                if subset == 'train':
+                    target_train.append(c+buffer[subset])
+                path = os.path.join(images_path, folder, file)
+                if not use_hd:
+                    image = transforms.ToTensor()(np.array(Image.open(path).convert('RGB')))
+                    data.append(image)
+                    if subset == 'train':
+                        data_train.append(image)
+                else:
+                    data.append(path)
+                    if subset == 'train':
+                        data_train.append(path)
+            num_elements[subset].append(count)
+            if count<60:
+                for i in range(60-count):
+                    target.append(c+buffer[subset]) 
+                    if not use_hd: # add the same element
                         data.append(image)
                     else:
-                        data.append(file_path)
-                    target.append(c)
+                        data.append(path) 
+
         datasets[subset] = [data, torch.LongTensor(target)]
-        num_elements[subset] = list(class_counter.values())
-    print()
-    norm = transforms.Normalize(np.array([x / 255.0 for x in [125.3, 123.0, 113.9]]), np.array([x / 255.0 for x in [63.0, 62.1, 66.7]]))
-    train_transforms = torch.nn.Sequential(transforms.RandomResizedCrop(84), transforms.RandomHorizontalFlip(), norm)
-    all_transforms = torch.nn.Sequential(transforms.Resize(92), transforms.CenterCrop(84), norm) if args.sample_aug == 1 else torch.nn.Sequential(transforms.RandomResizedCrop(84, scale=(0.14,1)), norm)
+        if subset == 'train':
+            datasets['train_base'] = [data_train, torch.LongTensor(target_train)] # clean train without duplicates
+    
+    image_size = 84
+    norm = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+    train_transforms = torch.nn.Sequential(transforms.RandomResizedCrop(image_size), 
+                                           transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4), 
+                                           transforms.RandomHorizontalFlip(), 
+                                           norm)
+
+    all_transforms = torch.nn.Sequential(transforms.Resize([int(1.15*image_size), int(1.15*image_size)]), 
+                                         transforms.CenterCrop(image_size), 
+                                         norm) if args.sample_aug == 1 else torch.nn.Sequential(transforms.RandomResizedCrop(image_size, scale=(0.14,1)), norm)
     if args.episodic:
-        train_loader = episodic_iterator(datasets['train_base'][0], 100, transforms = train_transforms, forcecpu = True, use_hd = True)
+        train_loader = episodic_iterator(datasets['train_base'][0], 100, transforms = train_transforms, forcecpu = True, use_hd = use_hd)
     else:
-        train_loader = iterator(datasets['train_base'][0], datasets['train_base'][1], transforms = train_transforms, forcecpu = True, use_hd = use_hd)
-    train_clean = iterator(datasets['train'][0], datasets['train'][1], transforms = all_transforms, forcecpu = True, shuffle = False, use_hd = use_hd)
-    val_loader = iterator(datasets['val'][0], datasets['val'][1], transforms = all_transforms, forcecpu = True, shuffle = False, use_hd = use_hd)
-    test_loader = iterator(datasets['test'][0], datasets['test'][1], transforms = all_transforms, forcecpu = True, shuffle = False, use_hd = use_hd)
-    return (train_loader, train_clean, val_loader, test_loader), [3, 84, 84], (100, 50, 50, (num_elements['train'], num_elements['val'], num_elements['test'])), True, False
+        train_loader = iterator(datasets['train_base'][0], datasets['train_base'][1], transforms = train_transforms, forcecpu = True, use_hd=use_hd)
+    train_clean = iterator(datasets['train'][0], datasets['train'][1], transforms = all_transforms, forcecpu = True, shuffle = False, use_hd=use_hd)
+    val_loader = iterator(datasets['val'][0], datasets['val'][1], transforms = all_transforms, forcecpu = True, shuffle = False, use_hd=use_hd)
+    test_loader = iterator(datasets['test'][0], datasets['test'][1], transforms = all_transforms, forcecpu = True, shuffle = False, use_hd=use_hd)
+
+    return (train_loader, train_clean, val_loader, test_loader), [3, image_size, image_size], (100, 50, 50, (num_elements['train'], num_elements['val'], num_elements['test'])), True, False
 
 def omniglotfs():
     base = torch.load(args.dataset_path + "omniglot/base.pt")

@@ -80,7 +80,7 @@ def train(model, train_loader, optimizer, epoch, scheduler, mixup = False, mm = 
             target_rot[2*bs:3*bs] = 2
             data[3*bs:] = data[3*bs:].transpose(3,2).flip(2)
             target_rot[3*bs:] = 3
-
+        
         if mixup or args.mm: # mixup or manifold_mixup
             index_mixup = torch.randperm(data.shape[0])
             lam = random.random()            
@@ -101,6 +101,7 @@ def train(model, train_loader, optimizer, epoch, scheduler, mixup = False, mm = 
                 loss = 0.5 * crit(output, features, target) + 0.5 * crit(output_rot, features, target_rot) - args.entropy_parameter*entropy                
             else:
                 loss = crit(output, features, target)-args.entropy_parameter*entropy
+
 
         # backprop loss
         loss.backward()
@@ -406,11 +407,9 @@ for i in range(args.runs):
         wandb.init(project="few-shot", 
             entity=args.wandb, 
             tags=tag, 
-            notes=str(vars(args))
-            )
-        wandb.log({"run": i})
-        wandb.log({'base': args.base, 'val': args.val , 'novel': args.novel, 'run' : i })
-        wandb.log({'rmclass': args.rmclass })
+            notes=str(vars(args)),
+            config = {"entropy_param": args.entropy_parameter}  
+        )
     model = create_model()
     if args.ema > 0:
         ema = ExponentialMovingAverage(model.parameters(), decay=args.ema)
